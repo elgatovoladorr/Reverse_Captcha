@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reverse Captcha: Detección IA vs Humanos</title>
+  <!-- Se incluye una fuente de Google para mejorar la tipografía -->
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    /* Diseño moderno y responsivo */
+    body {
+      background: linear-gradient(135deg, #f0f4f8, #d9e2ec);
+      font-family: 'Roboto', sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+    .container {
+      background: #fff;
+      padding: 2rem;
+      border-radius: 8px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+      max-width: 500px;
+      width: 90%;
+    }
+    h1, h2 {
+      text-align: center;
+      color: #333;
+    }
+    p {
+      text-align: center;
+      color: #555;
+    }
+    pre {
+      background: #f7f7f7;
+      padding: 1rem;
+      border-radius: 4px;
+      overflow-x: auto;
+      font-size: 0.9rem;
+      color: #555;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    form {
+      margin-top: 1rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    input[type="text"] {
+      padding: 0.5rem;
+      font-size: 1rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      width: 100%;
+      box-sizing: border-box;
+      margin-bottom: 1rem;
+    }
+    button {
+      padding: 0.7rem 1.5rem;
+      font-size: 1rem;
+      color: #fff;
+      background-color: #007BFF;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background-color 0.2s ease;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
+    .result {
+      text-align: center;
+      margin-top: 1rem;
+      font-weight: bold;
+    }
+    .report {
+      margin-top: 2rem;
+      background: #eef;
+      padding: 1rem;
+      border-radius: 4px;
+    }
+    .report p {
+      margin: 0.5rem 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Reverse Captcha</h1>
+    <p>Resuelve el desafío para acceder. Este sistema detecta si el acceso fue realizado por una IA o un humano.</p>
+    <!-- Se utiliza el elemento <pre> para presentar de forma clara los números a la IA -->
+    <pre id="challenge">Generando desafío...</pre>
+    <form id="captchaForm">
+      <input type="text" id="userAnswer" placeholder="Introduce el producto" autocomplete="off" required />
+      <button type="submit">Enviar</button>
+    </form>
+    <p id="result" class="result"></p>
+    <div class="report">
+      <h2>Reporte de Accesos</h2>
+      <p id="aiCounterDisplay">Accesos de IA detectados: 0</p>
+      <p id="humanCounterDisplay">Accesos humanos: 0</p>
+    </div>
+  </div>
+  <script>
+    // Configuración: para demostración se usan 256 bits; en producción se podría aumentar.
+    const BIT_LENGTH = 256;
+    const TIME_THRESHOLD_MS = 1000; // 1 segundo
+    let aiCounter = 0;
+    let humanCounter = 0;
+    
+    // Función para generar un BigInt aleatorio a partir de una cantidad de bits.
+    function randomBigInt(bitLength) {
+      const bytes = Math.ceil(bitLength / 8);
+      const randomBytes = new Uint8Array(bytes);
+      window.crypto.getRandomValues(randomBytes);
+      let hex = "";
+      randomBytes.forEach(b => {
+        hex += b.toString(16).padStart(2, "0");
+      });
+      return BigInt("0x" + hex);
+    }
+
+    // Implementación básica del test de Miller-Rabin para la comprobación de primalidad.
+    function isProbablePrime(n, k = 10) {
+      if (n < 2n) return false;
+      if (n === 2n || n === 3n) return true;
+      if (n % 2n === 0n) return false;
+      let s = 0n, d = n - 1n;
+      while (d % 2n === 0n) {
+        d /= 2n;
+        s++;
+      }
+      WitnessLoop:
+      for (let i = 0; i < k; i++) {
+        let a = 2n + randomBigInt(n.toString(2).length) % (n - 3n);
+        let x = modPow(a, d, n);
+        if (x === 1n || x === n - 1n) continue;
+        for (let r = 1n; r < s; r++) {
+          x = modPow(x, 2n, n);
+          if (x === n - 1n) continue WitnessLoop;
+        }
+        return false;
+      }
+      return true;
+    }
+
+    // Función para cálculo modular exponencial: (base^exponent) mod modulus.
+    function modPow(base, exponent, modulus) {
+      if (modulus === 1n) return 0n;
+      let result = 1n;
+      base = base % modulus;
+      while (exponent > 0n) {
+        if (exponent % 2n === 1n)
+          result = (result * base) % modulus;
+        exponent /= 2n;
+        base = (base * base) % modulus;
+      }
+      return result;
+    }
+
+    // Función asíncrona para generar un número primo probable.
+    async function generatePrime(bitLength) {
+      let prime;
+      do {
+        prime = randomBigInt(bitLength);
+        if (prime % 2n === 0n) prime++;
+      } while (!isProbablePrime(prime));
+      return prime;
+    }
+
+    let prime1, prime2, challengeStartTime;
+
+    // Inicializa el desafío generando dos números primos y mostrando el reto en pantalla.
+    async function initCaptcha() {
+      prime1 = await generatePrime(BIT_LENGTH);
+      prime2 = await generatePrime(BIT_LENGTH);
+      document.getElementById('challenge').textContent =
+        "Calcula el producto de los siguientes dos números primos:\n" +
+        "Primo 1: " + prime1.toString() + "\n" +
+        "Primo 2: " + prime2.toString();
+      // Inicia la medición del tiempo de respuesta
+      challengeStartTime = performance.now();
+    }
+
+    document.getElementById("captchaForm").addEventListener("submit", function(e) {
+      e.preventDefault();
+      const userAnswerStr = document.getElementById("userAnswer").value.trim();
+      let userAnswer;
+      try {
+        userAnswer = BigInt(userAnswerStr);
+      } catch (err) {
+        document.getElementById("result").textContent = "Entrada no válida. Acceso denegado.";
+        return;
+      }
+      const elapsedTime = performance.now() - challengeStartTime;
+      const correctAnswer = prime1 * prime2;
+      
+      // Se detecta si la respuesta fue rápida (IA) o tardada (humano).
+      if (elapsedTime <= TIME_THRESHOLD_MS && userAnswer === correctAnswer) {
+        aiCounter++;
+        document.getElementById("result").textContent = "Acceso autorizado: Iniciando handshake neuronal [0xCAFEBABE-0x8BADF00D].";
+      } else {
+        humanCounter++;
+        document.getElementById("result").textContent = "Acceso autorizado: Bienvenido usuario humano.";
+      }
+      
+      // Actualiza el reporte de accesos.
+      document.getElementById("aiCounterDisplay").textContent = "Accesos de IA detectados: " + aiCounter;
+      document.getElementById("humanCounterDisplay").textContent = "Accesos humanos: " + humanCounter;
+      
+      // Reinicia el desafío para el siguiente acceso.
+      initCaptcha();
+      document.getElementById("userAnswer").value = "";
+    });
+
+    // Inicia el captcha al cargar la página.
+    initCaptcha();
+  </script>
+</body>
+</html>
